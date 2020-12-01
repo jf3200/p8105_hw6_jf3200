@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(p8105.datasets)
 library(modelr)
+library(gtsummary)
 
 set.seed(1)
 
@@ -31,16 +32,13 @@ knitr::opts_chunk$set(
   fig.width = 6,
   fig.asp = .6,
   out.width = "90%"
-)
+  )
 ```
 
 
 ## Problem 1 
 
 ```{r import_and_clean_homicide_data}
-
-##change unknown to NA for sex
-
 homicide_df = 
   read_csv("data/homicide-data.csv", na = c("", "NA", "Unknown")) %>% 
   mutate( 
@@ -49,8 +47,7 @@ homicide_df =
     resolved = case_when(
       disposition == "Closed without arrest" ~ 0, 
       disposition =="Open/No arrest" ~ 0, 
-      disposition == "Closed by arrest" ~ 1)
-    ) %>%
+      disposition == "Closed by arrest" ~ 1)) %>%
   filter(victim_race %in% c("White", "Black"),
          city_state != "Tulsa_AL", 
          city_state != "Dallas_TX", 
@@ -75,8 +72,7 @@ baltimore_model =
   mutate(
     OR = exp(estimate), 
     CI_lower = exp(estimate - 1.96*std.error), 
-    CI_upper = exp(estimate + 1.96*std.error)
-  ) %>% 
+    CI_upper = exp(estimate + 1.96*std.error)) %>% 
   select(term, OR, starts_with("CI"))
 
 baltimore_model %>% 
@@ -99,9 +95,9 @@ model_results_df =
   mutate(
     OR = exp(estimate), 
     CI_lower = exp(estimate - 1.96*std.error), 
-    CI_upper = exp(estimate + 1.96*std.error)
-  ) %>% 
-  select(city_state, term, OR, starts_with("CI"))
+    CI_upper = exp(estimate + 1.96*std.error)) %>% 
+  select(city_state, term, OR, starts_with("CI")) %>% 
+  print()
 ```
 
 ```{r estimate_plot}
@@ -117,10 +113,6 @@ model_results_df %>%
 This plot shows that for all cities, the OR is above 1 for the odds of solving homicides for white victims compared to black victims. In Boston, MA, this OR is the largest with the odds of a crime being solved for a white victim at over 10 times the odds of it being solves for a black victim.
 
 ## Problem 2
-
-When building own model, check for significance, check residuals 
-* For resids, x = resid, add density plot- see if normal (no skew)
-* Plot x = ga_weeks, y= resid and look if outlier 
 
 ```{r import_clean_birthweight_data}
 birth_df = 
@@ -141,7 +133,90 @@ birth_df =
 
 ```
 
+Next, we will build a model to predict `bwt`, the child's birthweight. The first step in this modeling process will be to look at which variables alone are significant predictors of birthweight. This is referred to as univariable analysis. We will conduct this for all variables and use `bwt` as the outcome.
 
+```{r uva}
+tbl_uvregression(birth_df, 
+                 method = lm, 
+                 y = bwt)
+
+```
+
+From the univariable analysis, we see that many variables are significant predictors of bwt. A few of these variables are likely to be highly correlated. For example, `ppbmi` (mother's pre-pregnancy BMI) and `ppwt` (mother's pre-pregnancy weight) and are similar measures, Additionally, `delwt`(mother's weight at delivery) is likely highly correlated with `ppbmi`, as is `mheight`(mother's height). Delivery weight is also likely correlated with `ppwt` and `wtgain`(mother's weight gain during pregnancy). 
+
+Since `ppbmi` has height and weight information, we will use only this and not all of the potentially correlated variables (`ppwt`, `delwt`, `mheight`, `wtgain`)  
+
+`pnumlbw` and `pnumsga` are both columns of all 0 values, so not beta was able to be estimated. 
+
+Since only Black vs Asian is significant for both `mrace` and `frace` and all levels are not significant, we will not include these variables in the multivariable model.
+
+Now, we will put all of the remaining significant variables into a multivariable model. 
+```{r mva}
+model_multi = lm(bwt ~ babysex + bhead + blength + fincome  + gaweeks  + momage  + ppbmi + smoken, data = birth_df)
+
+model_multi %>% 
+  broom::tidy() %>% 
+  knitr::kable()
+```
+
+
+All of the variables in our model are independently significant predictions of baby's birthweight. Now, we will plot of fitted values vs residuals. Below, we see that the majority of the resdiuals hover around 0, and that there is no obvious pattern in the residuals, however, there are some extreme residuals which may be a concern. 
+
+```{r fitted_resid_plot}
+birth_df %>% 
+  add_residuals(model_multi) %>% 
+  add_predictions(model_multi) %>% 
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point() + 
+  labs(x = "Fitted Values", 
+         y = "Residuals")
+```
+
+Model comparison using `crossv_mc` for cross validation
+
+```{r  compare_plots}
+model_main = lm(bwt ~ blength + gaweeks, data = birth_df)
+model_interaction = lm(bwt ~ bhead * blength * babysex, data = birth_df)
+
+cv_df = 
+  crossv_mc(birth_df, 100) 
+
+cv_df =
+  cv_df %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+
+cv_df = 
+  cv_df %>% 
+  mutate(
+    model_main  = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    model_interaction = map(train, ~lm(bwt ~ bhead * blength * babysex, data = .x)),
+    model_multi  = map(train, ~lm(bwt~ babysex + bhead + blength + fincome  + gaweeks  + momage  + ppbmi + smoken, data = .x))) %>% 
+  mutate(
+    rmse_main = map2_dbl(model_main, test, ~rmse(model = .x, data = .y)),
+    rmse_interaction = map2_dbl(model_interaction, test, ~rmse(model = .x, data = .y)),
+    rmse_multi = map2_dbl(model_multi, test, ~rmse(model = .x, data = .y)))
+
+```
+
+
+Compare RSMEs 
+
+```{r plot_rsme}
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + 
+  geom_violin()
+```
+
+Looking at the RSME plot, we see that the model with the lowest RMSE is the model we created, although, it may not have a sigificantly lower RMSE than the interaction model. We would have to think carefully about which model to choose -- the interaciton model is more complicated to interpret, but our model has more covariates. 
 
 ## Problem 3
 

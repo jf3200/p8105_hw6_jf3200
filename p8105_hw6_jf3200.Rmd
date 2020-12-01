@@ -127,13 +127,13 @@ birth_df =
                              malform == 1 ~ "present")) %>% 
   mutate_at(
     vars(contains("race")), 
-    funs(case_when(
+    ~case_when(
       . == 1 ~ "white", 
       . == 2 ~"black", 
       . == 3 ~ "asian",
       . == 4 ~ "puerto rican", 
       . == 8 ~ "other", 
-      . == 9 ~ "unknown")))
+      . == 9 ~ "unknown"))
 
 ```
 

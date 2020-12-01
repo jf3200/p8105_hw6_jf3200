@@ -80,7 +80,7 @@ baltimore_model %>%
 
 ```
 
-The  estimate of the adjusted odds ratio for solving homicides comparing non-white victims to white victims keeping all other variables fixed is `r round(baltimore_model %>% filter(term == "victim_raceWhite") %>% pull(OR),3)` and the confidence interval is (`r round(baltimore_model %>% filter(term == "victim_raceWhite") %>% pull(CI_lower),3)`, `r round(baltimore_model %>% filter(term == "victim_raceWhite") %>% pull(CI_upper), 3)`)
+The  estimate of the adjusted odds ratio for solving homicides comparing white victims to black victims keeping all other variables fixed is `r round(baltimore_model %>% filter(term == "victim_raceWhite") %>% pull(OR),3)` and the confidence interval is (`r round(baltimore_model %>% filter(term == "victim_raceWhite") %>% pull(CI_lower),3)`, `r round(baltimore_model %>% filter(term == "victim_raceWhite") %>% pull(CI_upper), 3)`). This means that white victims have significantly higher odds of their homicides being solved compared to black victims in Baltimore. 
 
 Try this across cities.
 
@@ -107,10 +107,13 @@ model_results_df %>%
   ggplot(aes(x = city_state, y = OR)) + 
   geom_point() + 
   geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper)) +
-  theme(axis.text.x =  element_text(angle = 90, vjust = 0.5, hjust = 1))
+  theme(axis.text.x =  element_text(angle = 90, vjust = 0.5, hjust = 1)) + 
+  labs(x = "City and State", 
+       y = "Odds Ratio", 
+       title = "Odds Ratios for Solving Homicides in White vs. Black Victims")
 ```
 
-This plot shows that for all cities, the OR is above 1 for the odds of solving homicides for white victims compared to black victims. In Boston, MA, this OR is the largest with the odds of a crime being solved for a white victim at over 10 times the odds of it being solves for a black victim.
+This plot shows that for most cities, the odds ratio appears to be above 1. An odds ratio above 1 means that the odds of solving homicides for white victims is higher compared to solving homicides for black victims, although it may not be significantly different depending on the confidence intervals. In Boston, MA, this OR is the largest with the odds of a crime being solved for a white victim at over 10 times the odds of it being solves for a black victim.
 
 ## Problem 2
 
@@ -142,25 +145,26 @@ tbl_uvregression(birth_df,
 
 ```
 
-From the univariable analysis, we see that many variables are significant predictors of bwt. A few of these variables are likely to be highly correlated. For example, `ppbmi` (mother's pre-pregnancy BMI) and `ppwt` (mother's pre-pregnancy weight) and are similar measures, Additionally, `delwt`(mother's weight at delivery) is likely highly correlated with `ppbmi`, as is `mheight`(mother's height). Delivery weight is also likely correlated with `ppwt` and `wtgain`(mother's weight gain during pregnancy). 
+From the univariable analysis, we see that many variables are significant predictors of bwt. A few of these variables are likely to be highly correlated. For example, `ppbmi` (mother's pre-pregnancy BMI) and `ppwt` (mother's pre-pregnancy weight) and are similar measures. Additionally, `delwt`(mother's weight at delivery) is likely highly correlated with `ppbmi`, as is `mheight`(mother's height). `delwt` is also likely correlated with `ppwt` and `wtgain`(mother's weight gain during pregnancy).   
 
-Since `ppbmi` has height and weight information, we will use only this and not all of the potentially correlated variables (`ppwt`, `delwt`, `mheight`, `wtgain`)  
+Since `ppbmi` has height and weight information all in one, we will use only this and not all of the potentially correlated variables in our multivariable model(`ppwt`, `delwt`, `mheight`, `wtgain`). Corrlated variables can lead to multicollinearity issues in models, which we want to avoid.  
 
-`pnumlbw` and `pnumsga` are both columns of all 0 values, so not beta was able to be estimated. 
+`pnumlbw` and `pnumsga` are both columns of all 0 values, so no beta was able to be estimated, thus, they will not be included in further modeling.  
 
 Since only Black vs Asian is significant for both `mrace` and `frace` and all levels are not significant, we will not include these variables in the multivariable model.
 
-Now, we will put all of the remaining significant variables into a multivariable model. 
+Now, we will put all of the remaining significant, uncorrelated variables into a multivariable model. 
+
 ```{r mva}
 model_multi = lm(bwt ~ babysex + bhead + blength + fincome  + gaweeks  + momage  + ppbmi + smoken, data = birth_df)
 
 model_multi %>% 
   broom::tidy() %>% 
-  knitr::kable(digits = 3)
+  knitr::kable()
 ```
 
 
-All of the variables in our model are independently significant predictions of baby's birthweight. Now, we will plot of fitted values vs residuals. Below, we see that the majority of the resdiuals hover around 0, and that there is no obvious pattern in the residuals, however, there are some extreme residuals which may be a concern. 
+All of the variables in our model are independent significant predictors of a baby's birthweight. Now, we will plot of fitted values vs residuals. Below, we see that the majority of the residuals hover around 0, and that there is no obvious pattern in the residuals. However, there are some extreme residuals which may be a concern. 
 
 ```{r fitted_resid_plot}
 birth_df %>% 
@@ -169,10 +173,11 @@ birth_df %>%
   ggplot(aes(x = pred, y = resid)) + 
   geom_point() + 
   labs(x = "Fitted Values", 
-         y = "Residuals")
+       y = "Residuals", 
+       title = "Residuals vs. Fitted Values Plot")
 ```
 
-Model comparison using `crossv_mc` for cross validation
+Next, we will do a model comparison using `crossv_mc` for cross validation. We will compare our constructed model to a model using length at birth and gestational age as predictors, and to a model using head circumference, length, sex, and all interactions between these. 
 
 ```{r  compare_plots}
 model_main = lm(bwt ~ blength + gaweeks, data = birth_df)
@@ -201,7 +206,7 @@ cv_df =
 ```
 
 
-Compare RSMEs 
+We will plot the RMSE values from the 3 models and compare them. 
 
 ```{r plot_rsme}
 cv_df %>% 
@@ -213,12 +218,17 @@ cv_df %>%
     names_prefix = "rmse_") %>% 
   mutate(model = fct_inorder(model)) %>% 
   ggplot(aes(x = model, y = rmse)) + 
-  geom_violin()
+  geom_violin() + 
+  labs(x = "Model", 
+       y = "RMSE", 
+       title = "Comparison of RMSE Values by Model")
 ```
 
-Looking at the RSME plot, we see that the model with the lowest RMSE is the model we created, although, it may not have a sigificantly lower RMSE than the interaction model. We would have to think carefully about which model to choose -- the interaciton model is more complicated to interpret, but our model has more covariates. 
+Looking at the RSME plot, we see that the model with the lowest RMSE is the model we created from our univariable/multivariable analysis approach. Despite the RMSE being the lowest, it may not necessarily be a better model than the model using head circumference, length, sex, and all interactions. We have to think carefully about which model to choose -- the interaction model is more complicated to interpret, but our model has more predictors. 
 
 ## Problem 3
+
+For this problem, we will import 2017 Central Park weather data
 
 ```{r import_weather_df}
 weather_df = 
@@ -245,7 +255,7 @@ boot_straps =
 
 Now, we will run a linear model on each bootstrapped sample and extract the relevant information we need (r-squared and log(beta0 * beta1))
 
-```{r analyze_bootstraps}
+```{r analyze_bootstraps, cache=TRUE}
 bootstrap_results = 
   boot_straps %>% 
   mutate(
@@ -285,7 +295,7 @@ bootstrap_results %>%
 
 ```
 
-```{r summarize_samples}
+```{r sample_cis}
 bootstrap_results %>% 
   select(-b0, -b1) %>% 
   pivot_longer(r.squared:logb0b1, 

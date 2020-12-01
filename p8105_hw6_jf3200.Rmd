@@ -156,7 +156,7 @@ model_multi = lm(bwt ~ babysex + bhead + blength + fincome  + gaweeks  + momage 
 
 model_multi %>% 
   broom::tidy() %>% 
-  knitr::kable()
+  knitr::kable(digits = 3)
 ```
 
 
@@ -220,3 +220,83 @@ Looking at the RSME plot, we see that the model with the lowest RMSE is the mode
 
 ## Problem 3
 
+```{r import_weather_df}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
+
+We will create the 5,000 bootstrap samples from the weather data 
+
+```{r}
+boot_straps = 
+  weather_df %>% 
+  modelr::bootstrap(n = 5000)
+```
+
+Now, we will run a linear model on each bootstrapped sample and extract the relevant information we need (r-squared and log(beta0 * beta1))
+
+```{r analyze_bootstraps}
+bootstrap_results = 
+  boot_straps %>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::glance), 
+    results2 = map(models, broom::tidy)) %>% 
+  select(-strap, -models) %>% 
+  unnest(c(results, results2), names_repair = "universal") %>% 
+  select(.id, term, estimate, r.squared) %>% 
+  pivot_wider(id_cols = c(.id, r.squared),
+              names_from = term,
+              values_from = estimate) %>% 
+  rename(b0 = `(Intercept)`, 
+         b1 = "tmin") %>% 
+  mutate(logb0b1 = log(b0 * b1)) 
+
+```
+
+Looking at the plots below, we see that both r-squared and log(b0*b1) are both normally distributed. The means and 95% confidence intervals for each quantity are also provided.
+
+```{r plot_distributions}
+bootstrap_results %>% 
+  ggplot(aes(x = r.squared)) + 
+  geom_histogram() +
+  labs(x = "R-squared",
+       y = "Count",
+       title = "Distribution of R-squared")
+
+
+bootstrap_results %>% 
+  ggplot(aes(x = logb0b1)) + 
+  geom_histogram() +
+  labs(x = "log(beta0 * beta1)",
+       y = "Count",
+       title = "Distribution of log(beta0 * beta1)")
+
+
+```
+
+```{r summarize_samples}
+bootstrap_results %>% 
+  select(-b0, -b1) %>% 
+  pivot_longer(r.squared:logb0b1, 
+               names_to = "term", 
+               values_to = "estimate") %>%
+  group_by(term) %>% 
+  summarize(
+    mean = mean(estimate),
+    ci_lower = quantile(estimate, 0.025), 
+    ci_upper = quantile(estimate, 0.975)) %>% 
+  knitr::kable(digits = 3)
+
+
+```
